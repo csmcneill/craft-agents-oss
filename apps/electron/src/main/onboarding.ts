@@ -11,7 +11,7 @@ import { saveConfig, loadStoredConfig, generateWorkspaceId, type AuthType, type 
 import { getDefaultWorkspacesDir, generateUniqueWorkspacePath } from '@craft-agent/shared/workspaces'
 import { CraftOAuth, getMcpBaseUrl } from '@craft-agent/shared/auth'
 import { validateMcpConnection } from '@craft-agent/shared/mcp'
-import { getExistingClaudeToken, getExistingClaudeCredentials, isClaudeCliInstalled, runClaudeSetupToken, startClaudeOAuth, exchangeClaudeCode, hasValidOAuthState, clearOAuthState } from '@craft-agent/shared/auth'
+import { getExistingClaudeToken, getExistingClaudeCredentials, isClaudeCliInstalled, runClaudeSetupToken, startClaudeOAuth, exchangeClaudeCode, hasValidOAuthState, clearOAuthState, type ClaudeOAuthCredential } from '@craft-agent/shared/auth'
 import { getCredentialManager as getCredentialManagerFn } from '@craft-agent/shared/credentials'
 import {
   IPC_CHANNELS,
@@ -81,7 +81,7 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
   ipcMain.handle(IPC_CHANNELS.ONBOARDING_SAVE_CONFIG, async (_event, config: {
     authType?: AuthType  // Optional - if not provided, preserves existing auth type
     workspace?: { name: string; iconUrl?: string; mcpUrl?: string }  // Optional - if not provided, only updates billing
-    credential?: string
+    credential?: string | ClaudeOAuthCredential  // API key, OAuth token string, or full OAuth credentials object
     mcpCredentials?: { accessToken: string; clientId?: string }
     anthropicBaseUrl?: string | null
     customModel?: string | null
@@ -92,7 +92,8 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
       workspaceName: config.workspace?.name,
       mcpUrl: config.workspace?.mcpUrl,
       hasCredential: !!config.credential,
-      credentialLength: config.credential?.length,
+      credentialIsObject: typeof config.credential === 'object',
+      credentialLength: typeof config.credential === 'string' ? config.credential.length : undefined,
       hasMcpCredentials: !!config.mcpCredentials,
       anthropicBaseUrl: config.anthropicBaseUrl,
       customModel: config.customModel,
@@ -105,24 +106,55 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
       if (config.credential && config.authType) {
         mainLog.info('[Onboarding:Main] Saving credential for authType:', config.authType)
         if (config.authType === 'api_key') {
+          // API key must be a string
+          if (typeof config.credential !== 'string') {
+            mainLog.error('[Onboarding:Main] Invalid credential type for api_key - expected string')
+            return { success: false, error: 'Invalid credential type for API key' }
+          }
           mainLog.info('[Onboarding:Main] Calling manager.setApiKey...')
           await manager.setApiKey(config.credential)
           mainLog.info('[Onboarding:Main] API key saved successfully')
         } else if (config.authType === 'oauth_token') {
-          mainLog.info('[Onboarding:Main] Importing full Claude OAuth credentials...')
-          // Import full credentials including refresh token and expiry from Claude CLI
-          const cliCreds = getExistingClaudeCredentials()
-          if (cliCreds) {
-            await manager.setClaudeOAuthCredentials({
-              accessToken: cliCreds.accessToken,
-              refreshToken: cliCreds.refreshToken,
-              expiresAt: cliCreds.expiresAt,
+          // OAuth token can be a string or full credentials object
+          if (typeof config.credential === 'object') {
+            // Full credentials object provided - save directly
+            mainLog.info('[Onboarding:Main] Saving full Claude OAuth credentials object...', {
+              hasAccessToken: !!config.credential.accessToken,
+              hasRefreshToken: !!config.credential.refreshToken,
+              refreshTokenLength: config.credential.refreshToken?.length,
+              hasExpiresAt: !!config.credential.expiresAt,
+              expiresAt: config.credential.expiresAt,
+              expiresAtDate: config.credential.expiresAt ? new Date(config.credential.expiresAt).toISOString() : null,
             })
-            mainLog.info('[Onboarding:Main] Claude OAuth credentials saved with refresh token')
+            await manager.setClaudeOAuthCredentials({
+              accessToken: config.credential.accessToken,
+              refreshToken: config.credential.refreshToken,
+              expiresAt: config.credential.expiresAt,
+            })
+            // Verify credentials were saved correctly
+            const savedCreds = await manager.getClaudeOAuthCredentials()
+            mainLog.info('[Onboarding:Main] Claude OAuth credentials saved. Verification:', {
+              saved: !!savedCreds,
+              hasRefreshToken: !!savedCreds?.refreshToken,
+              refreshTokenLength: savedCreds?.refreshToken?.length,
+              hasExpiresAt: !!savedCreds?.expiresAt,
+            })
           } else {
-            // Fallback to just saving the access token
-            await manager.setClaudeOAuth(config.credential)
-            mainLog.info('[Onboarding:Main] Claude OAuth saved (access token only)')
+            // String token provided - try to get full credentials from CLI, fallback to token only
+            mainLog.info('[Onboarding:Main] Token string provided, attempting to import full Claude OAuth credentials from CLI...')
+            const cliCreds = getExistingClaudeCredentials()
+            if (cliCreds) {
+              await manager.setClaudeOAuthCredentials({
+                accessToken: cliCreds.accessToken,
+                refreshToken: cliCreds.refreshToken,
+                expiresAt: cliCreds.expiresAt,
+              })
+              mainLog.info('[Onboarding:Main] Claude OAuth credentials saved with refresh token from CLI')
+            } else {
+              // Fallback to just saving the access token
+              await manager.setClaudeOAuth(config.credential)
+              mainLog.info('[Onboarding:Main] Claude OAuth saved (access token only - no refresh token available)')
+            }
           }
         }
       } else {
@@ -266,6 +298,19 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
       return token
     } catch (error) {
       mainLog.error('[Onboarding] Get existing Claude token error:', error)
+      return null
+    }
+  })
+
+  // Get existing Claude OAuth credentials (full object with refresh token and expiry) from keychain/credentials file
+  ipcMain.handle(IPC_CHANNELS.ONBOARDING_GET_EXISTING_CLAUDE_CREDENTIALS, async () => {
+    try {
+      mainLog.info('[Onboarding] Checking for existing Claude credentials...')
+      const creds = getExistingClaudeCredentials()
+      mainLog.info('[Onboarding] Existing Claude credentials:', creds ? `found (has refreshToken: ${!!creds.refreshToken}, expiresAt: ${creds.expiresAt})` : 'not found')
+      return creds
+    } catch (error) {
+      mainLog.error('[Onboarding] Get existing Claude credentials error:', error)
       return null
     }
   })

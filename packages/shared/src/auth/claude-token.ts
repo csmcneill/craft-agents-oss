@@ -196,21 +196,45 @@ export async function refreshClaudeToken(refreshToken: string): Promise<{
   refreshToken?: string;
   expiresAt?: number;
 }> {
+  // Use the same endpoint as token exchange
+  const TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
+  const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // Same client ID as OAuth flow
+  
   const params = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
-    client_id: 'claude-desktop',
+    client_id: CLIENT_ID,
   });
 
-  const response = await fetch('https://api.anthropic.com/v1/oauth/token', {
+  const response = await fetch(TOKEN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      Accept: 'application/json',
+    },
     body: params.toString(),
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to refresh Claude token: ${error}`);
+    let errorText: string;
+    try {
+      errorText = await response.text();
+    } catch (e) {
+      errorText = `HTTP ${response.status} ${response.statusText}`;
+    }
+    
+    // Try to parse error JSON for better error messages
+    let errorMessage: string;
+    try {
+      const errorJson = JSON.parse(errorText);
+      errorMessage = errorJson.error_description || errorJson.error || errorText;
+    } catch {
+      errorMessage = errorText;
+    }
+    
+    const fullErrorMessage = `Failed to refresh Claude token: ${response.status} ${response.statusText} - ${errorMessage}`;
+    throw new Error(fullErrorMessage);
   }
 
   const data = await response.json() as {

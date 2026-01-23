@@ -40,7 +40,8 @@ export type {
 // Use types-only subpaths to avoid pulling in Node.js dependencies
 import type { AuthState, SetupNeeds } from '@craft-agent/shared/auth/types';
 import type { AuthType } from '@craft-agent/shared/config/types';
-export type { AuthState, SetupNeeds, AuthType };
+import type { ClaudeOAuthCredential } from '@craft-agent/shared/auth';
+export type { AuthState, SetupNeeds, AuthType, ClaudeOAuthCredential };
 
 // Import source types for session source selection
 import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@craft-agent/shared/sources/types';
@@ -534,6 +535,7 @@ export const IPC_CHANNELS = {
   ONBOARDING_SAVE_CONFIG: 'onboarding:saveConfig',
   // Claude OAuth
   ONBOARDING_GET_EXISTING_CLAUDE_TOKEN: 'onboarding:getExistingClaudeToken',
+  ONBOARDING_GET_EXISTING_CLAUDE_CREDENTIALS: 'onboarding:getExistingClaudeCredentials',
   ONBOARDING_IS_CLAUDE_CLI_INSTALLED: 'onboarding:isClaudeCliInstalled',
   ONBOARDING_RUN_CLAUDE_SETUP_TOKEN: 'onboarding:runClaudeSetupToken',
   // Native Claude OAuth (two-step flow)
@@ -728,13 +730,14 @@ export interface ElectronAPI {
   saveOnboardingConfig(config: {
     authType?: AuthType  // Optional - if not provided, preserves existing auth type (for add workspace)
     workspace?: { name: string; iconUrl?: string; mcpUrl?: string }  // Optional - if not provided, only updates billing
-    credential?: string  // API key or OAuth token based on authType
+    credential?: string | ClaudeOAuthCredential  // API key, OAuth token string, or full OAuth credentials object
     mcpCredentials?: { accessToken: string; clientId?: string }  // MCP OAuth credentials
     anthropicBaseUrl?: string | null  // Custom Anthropic API base URL
     customModel?: string | null  // Custom model ID override
   }): Promise<OnboardingSaveResult>
   // Claude OAuth
   getExistingClaudeToken(): Promise<string | null>
+  getExistingClaudeCredentials(): Promise<ClaudeOAuthCredential | null>
   isClaudeCliInstalled(): Promise<boolean>
   runClaudeSetupToken(): Promise<ClaudeOAuthResult>
   // Native Claude OAuth (two-step flow)

@@ -17,7 +17,7 @@ import type {
   ApiSetupMethod,
 } from '@/components/onboarding'
 import type { ApiKeySubmitData } from '@/components/apisetup'
-import type { AuthType, SetupNeeds } from '../../shared/types'
+import type { AuthType, SetupNeeds, ClaudeOAuthCredential } from '../../shared/types'
 
 interface UseOnboardingOptions {
   /** Called when onboarding is complete */
@@ -91,7 +91,7 @@ export function useOnboarding({
   })
 
   // Save configuration
-  const handleSaveConfig = useCallback(async (credential?: string, options?: { baseUrl?: string; customModel?: string }) => {
+  const handleSaveConfig = useCallback(async (credential?: string | ClaudeOAuthCredential, options?: { baseUrl?: string; customModel?: string }) => {
     if (!state.apiSetupMethod) {
       console.log('[Onboarding] No API setup method selected, returning early')
       return
@@ -101,7 +101,7 @@ export function useOnboarding({
 
     try {
       const authType = apiSetupMethodToAuthType(state.apiSetupMethod)
-      console.log('[Onboarding] Saving config with authType:', authType)
+      console.log('[Onboarding] Saving config with authType:', authType, 'credential type:', typeof credential === 'object' ? 'object (full credentials)' : typeof credential)
 
       const result = await window.electronAPI.saveOnboardingConfig({
         authType,
@@ -259,7 +259,19 @@ export function useOnboarding({
     setState(s => ({ ...s, credentialStatus: 'validating', errorMessage: undefined }))
 
     try {
-      await handleSaveConfig(existingClaudeToken)
+      // Get full credentials (including refresh token and expiry) from CLI keychain
+      console.log('[Onboarding] Fetching full Claude credentials from CLI...')
+      const fullCredentials = await window.electronAPI.getExistingClaudeCredentials()
+      
+      if (fullCredentials) {
+        // Use full credentials object with refresh token and expiry
+        console.log('[Onboarding] Found full credentials with refresh token:', !!fullCredentials.refreshToken)
+        await handleSaveConfig(fullCredentials)
+      } else {
+        // Fallback to just the token string if full credentials aren't available
+        console.log('[Onboarding] Full credentials not found, using token string only')
+        await handleSaveConfig(existingClaudeToken)
+      }
 
       setState(s => ({
         ...s,

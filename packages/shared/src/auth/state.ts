@@ -83,6 +83,12 @@ async function getValidClaudeOAuthToken(): Promise<string | null> {
   // Check if token is expired
   if (isTokenExpired(creds.expiresAt)) {
     debug('[auth] Claude OAuth token expired, attempting refresh');
+    debug('[auth] Credentials check:', {
+      hasRefreshToken: !!creds.refreshToken,
+      refreshTokenLength: creds.refreshToken?.length,
+      expiresAt: creds.expiresAt,
+      expiresAtDate: creds.expiresAt ? new Date(creds.expiresAt).toISOString() : null,
+    });
 
     // Try to refresh if we have a refresh token
     if (creds.refreshToken) {
@@ -99,7 +105,14 @@ async function getValidClaudeOAuthToken(): Promise<string | null> {
 
         return refreshed.accessToken;
       } catch (error) {
-        debug('[auth] Failed to refresh Claude OAuth token:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        debug('[auth] Failed to refresh Claude OAuth token:', {
+          message: errorMessage,
+          stack: errorStack,
+          errorType: error?.constructor?.name,
+          errorString: String(error),
+        });
         // Token refresh failed - return null to trigger re-authentication
         return null;
       }
